@@ -1,4 +1,4 @@
-CFLAGS += -std=gnu99 -O2 -g -Wall -Werror
+CFLAGS += -std=gnu99 -O2 -g -Wall #-Werror
 CPPFLAGS += -D_GNU_SOURCE -D__CHECK_ENDIAN__
 NVME = nvme
 INSTALL ?= install
@@ -35,9 +35,15 @@ OBJS := argconfig.o suffix.o parser.o nvme-print.o nvme-ioctl.o \
 	lnvm-nvme.o memblaze-nvme.o nvme-models.o
 
 nvme: nvme.c nvme.h $(OBJS) NVME-VERSION-FILE
-	$(CC) $(CPPFLAGS) $(CFLAGS) nvme.c -o $(NVME) $(OBJS) $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) nvme.c -pthread -lm -o $(NVME) $(OBJS) $(LDFLAGS)
 
 nvme.o: nvme.c nvme.h nvme-print.h nvme-ioctl.h argconfig.h suffix.h nvme-lightnvm.h fabrics.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
+
+mehrab: mehrab.c nvme.h $(OBJS) NVME-VERSION-FILE
+	 $(CC) $(CPPFLAGS) $(CFLAGS) mehrab.c -o $(NVME) $(OBJS) $(LDFLAGS)
+
+mehrab.o: mehrab.c nvme.h nvme-print.h nvme-ioctl.h argconfig.h suffix.h nvme-lightnvm.h fabrics.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
 
 %.o: %.c %.h nvme.h linux/nvme_ioctl.h

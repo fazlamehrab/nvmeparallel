@@ -36,7 +36,6 @@
 #include <unistd.h>
 #include <math.h>
 #include <dirent.h>
-#include <time.h>
 
 #include <linux/fs.h>
 
@@ -57,8 +56,6 @@
 #include "fabrics.h"
 #include "nvme.h"
 
-#include <pthread.h>
-
 #define array_len(x) ((size_t)(sizeof(x) / sizeof(x[0])))
 #define min(x, y) (x) > (y) ? (y) : (x)
 #define max(x, y) (x) > (y) ? (x) : (y)
@@ -68,11 +65,6 @@ static struct stat nvme_stat;
 const char *devicename;
 
 static const char nvme_version_string[] = NVME_VERSION;
-
-#define NO_OF_CPU 1
-#define NVME_BLOCK_SIZE 512
-
-pthread_t tid[NO_OF_CPU];
 
 #define CREATE_CMD
 #include "nvme-builtin.h"
@@ -93,11 +85,6 @@ static struct program nvme = {
 		"device (ex: /dev/nvme0) or an nvme block device "\
 		"(ex: /dev/nvme0n1).",
 	.extensions = &builtin,
-};
-
-struct write_struct{
-        char cmd[200];
-        char *buffer;
 };
 
 static unsigned long long elapsed_utime(struct timeval start_time,
@@ -578,7 +565,7 @@ static int delete_ns(int argc, char **argv, struct command *cmd, struct plugin *
 	else if (err > 0)
 		fprintf(stderr, "NVMe Status:%s(%x)\n",
 					nvme_status_to_string(err), err);
-	else 
+	else
 		fprintf(stderr, "system error:(%x)\n", err);
 	return err;
 }
@@ -2223,8 +2210,8 @@ static int resv_report(int argc, char **argv, struct command *cmd, struct plugin
 	return err;
 }
 
-static int submit_io_data(int opcode, char *command, const char *desc,
-		     int argc, char **argv, char *data_buffer)
+static int submit_io(int opcode, char *command, const char *desc,
+		     int argc, char **argv)
 {
 	struct timeval start_time, end_time;
 	void *buffer, *mbuffer = NULL;
@@ -2313,7 +2300,6 @@ static int submit_io_data(int opcode, char *command, const char *desc,
 	if (cfg.force_unit_access)
 		control |= NVME_RW_FUA;
 	if (strlen(cfg.data)){
-
 		dfd = open(cfg.data, flags, mode);
 		if (dfd < 0) {
 			perror(cfg.data);
@@ -2321,7 +2307,6 @@ static int submit_io_data(int opcode, char *command, const char *desc,
 		}
 		mfd = dfd;
 	}
-
 	if (strlen(cfg.metadata)){
 		mfd = open(cfg.metadata, flags, mode);
 		if (mfd < 0) {
@@ -2345,11 +2330,10 @@ static int submit_io_data(int opcode, char *command, const char *desc,
 	} else {
 		buffer_size = cfg.data_size;
 	}
-//printf("data = %s\n", data_buffer);
+
 	if (posix_memalign(&buffer, getpagesize(), buffer_size))
 		return ENOMEM;
-	//memset(buffer, 0, cfg.data_size);
-	memcpy(buffer, data_buffer, cfg.data_size);
+	memset(buffer, 0, cfg.data_size);
 
 	if (cfg.metadata_size) {
 		mbuffer = malloc(cfg.metadata_size);
@@ -2359,13 +2343,11 @@ static int submit_io_data(int opcode, char *command, const char *desc,
 		}
 	}
 
-	if (strlen(cfg.data) && (opcode & 1) && read(dfd, (void *)buffer, cfg.data_size) < 0) {
+	if ((opcode & 1) && read(dfd, (void *)buffer, cfg.data_size) < 0) {
 		fprintf(stderr, "failed to read data buffer from input file\n");
 		err = EINVAL;
 		goto free_and_return;
 	}
-
-//printf("data = %s\n", (char *)buffer);
 
 	if ((opcode & 1) && cfg.metadata_size &&
 				read(mfd, (void *)mbuffer, cfg.metadata_size) < 0) {
@@ -2412,8 +2394,8 @@ static int submit_io_data(int opcode, char *command, const char *desc,
 			fprintf(stderr, "failed to write meta-data buffer to output file\n");
 			err = EINVAL;
 			goto free_and_return;
-		} /*else
-			fprintf(stderr, "%s: Success\n", command);*/
+		} else
+			fprintf(stderr, "%s: Success\n", command);
 	}
  free_and_return:
 	free(buffer);
@@ -2421,201 +2403,6 @@ static int submit_io_data(int opcode, char *command, const char *desc,
 		free(mbuffer);
 	return err;
 }
-
-static int submit_io(int opcode, char *command, const char *desc,
-      int argc, char **argv)
- {
- struct timeval start_time, end_time;
- void *buffer, *mbuffer = NULL;
- int err = 0;
- int dfd, mfd;
- int flags = opcode & 1 ? O_RDONLY : O_WRONLY | O_CREAT;
- int mode = S_IRUSR | S_IWUSR |S_IRGRP | S_IWGRP| S_IROTH;
- __u16 control = 0;
- int phys_sector_size = 0;
- long long buffer_size = 0;
- 
- const char *start_block = "64-bit addr of first block to access";
- const char *block_count = "number of blocks (zeroes based) on device to access";
- const char *data_size = "size of data in bytes";
- const char *metadata_size = "size of metadata in bytes";
- const char *ref_tag = "reference tag (for end to end PI)";
- const char *data = "data file";
- const char *metadata = "metadata file";
- const char *prinfo = "PI and check field";
- const char *app_tag_mask = "app tag mask (for end to end PI)";
- const char *app_tag = "app tag (for end to end PI)";
- const char *limited_retry = "limit num. media access attempts";
- const char *latency = "output latency statistics";
- const char *force = "force device to commit data before command completes";
- const char *show = "show command before sending";
- const char *dry = "show command instead of sending";
- 
- struct config {
- __u64 start_block;
- __u16 block_count;
- __u64 data_size;
- __u64 metadata_size;
- __u32 ref_tag;
- char  *data;
- char  *metadata;
- __u8  prinfo;
- __u8  app_tag_mask;
- __u32 app_tag;
- int   limited_retry;
- int   force_unit_access;
- int   show;
- int   dry_run;
- int   latency;
- };
- 
- struct config cfg = {
- .start_block     = 0,
- .block_count     = 0,
- .data_size       = 0,
- .metadata_size   = 0,
- .ref_tag         = 0,
- .data            = "",
- .metadata        = "",
- .prinfo          = 0,
- .app_tag_mask    = 0,
- .app_tag         = 0,
- };
- 
- const struct argconfig_commandline_options command_line_options[] = {
- {"start-block",       's', "NUM",  CFG_LONG_SUFFIX, &cfg.start_block,       required_argument, start_block},
- {"block-count",       'c', "NUM",  CFG_SHORT,       &cfg.block_count,       required_argument, block_count},
- {"data-size",         'z', "NUM",  CFG_LONG_SUFFIX, &cfg.data_size,         required_argument, data_size},
- {"metadata-size",     'y', "NUM",  CFG_LONG_SUFFIX, &cfg.metadata_size,     required_argument, metadata_size},
- {"ref-tag",           'r', "NUM",  CFG_POSITIVE,    &cfg.ref_tag,           required_argument, ref_tag},
- {"data",              'd', "FILE", CFG_STRING,      &cfg.data,              required_argument, data},
- {"metadata",          'M', "FILE", CFG_STRING,      &cfg.metadata,          required_argument, metadata},
- {"prinfo",            'p', "NUM",  CFG_BYTE,        &cfg.prinfo,            required_argument, prinfo},
- {"app-tag-mask",      'm', "NUM",  CFG_BYTE,        &cfg.app_tag_mask,      required_argument, app_tag_mask},
- {"app-tag",           'a', "NUM",  CFG_POSITIVE,    &cfg.app_tag,           required_argument, app_tag},
- {"limited-retry",     'l', "",     CFG_NONE,        &cfg.limited_retry,     no_argument,       limited_retry},
- {"force-unit-access", 'f', "",     CFG_NONE,        &cfg.force_unit_access, no_argument,       force},
- {"show-command",      'v', "",     CFG_NONE,        &cfg.show,              no_argument,       show},
- {"dry-run",           'w', "",     CFG_NONE,        &cfg.dry_run,           no_argument,       dry},
- {"latency",           't', "",     CFG_NONE,        &cfg.latency,           no_argument,       latency},
- {NULL}
- };
- 
- parse_and_open(argc, argv, desc, command_line_options, &cfg, sizeof(cfg));
- 
- dfd = mfd = opcode & 1 ? STDIN_FILENO : STDOUT_FILENO;
- if (cfg.prinfo > 0xf)
- return EINVAL;
- control |= (cfg.prinfo << 10);
- if (cfg.limited_retry)
- control |= NVME_RW_LR;
- if (cfg.force_unit_access)
- control |= NVME_RW_FUA;
- if (strlen(cfg.data)){
- dfd = open(cfg.data, flags, mode);
- 
- if (dfd < 0) {
- perror(cfg.data);
- return EINVAL;
- }
- mfd = dfd;
- }
- if (strlen(cfg.metadata)){
- mfd = open(cfg.metadata, flags, mode);
- if (mfd < 0) {
- perror(cfg.data);
- return EINVAL;
- }
- }
- 
- if (!cfg.data_size){
- fprintf(stderr, "data size not provided\n");
- return EINVAL;
- }
- 
- if (ioctl(fd, BLKPBSZGET, &phys_sector_size) < 0)
- return errno;
- 
- buffer_size = (cfg.block_count + 1) * phys_sector_size;
- if (cfg.data_size < buffer_size) {
- fprintf(stderr, "Rounding data size to fit block count (%lld bytes)\n",
- buffer_size);
- } else {
- buffer_size = cfg.data_size;
- }
- 
- if (posix_memalign(&buffer, getpagesize(), buffer_size))
- return ENOMEM;
- memset(buffer, 0, cfg.data_size);
- 
- if (cfg.metadata_size) {
- mbuffer = malloc(cfg.metadata_size);
- if (!mbuffer) {
-  free(buffer);
- return ENOMEM;
- }
- }
- 
- if ((opcode & 1) && read(dfd, (void *)buffer, cfg.data_size) < 0) {
- fprintf(stderr, "failed to read data buffer from input file\n");
- err = EINVAL;
- goto free_and_return;
- }
- 
- if ((opcode & 1) && cfg.metadata_size &&
- read(mfd, (void *)mbuffer, cfg.metadata_size) < 0) {
- fprintf(stderr, "failed to read meta-data buffer from input file\n");
- err = EINVAL;
- goto free_and_return;
- }
- 
- if (cfg.show) {
- printf("opcode       : %02x\n", opcode);
- printf("flags        : %02x\n", 0);
- printf("control      : %04x\n", control);
- printf("nblocks      : %04x\n", cfg.block_count);
- printf("rsvd         : %04x\n", 0);
- printf("metadata     : %"PRIx64"\n", (uint64_t)(uintptr_t)mbuffer);
- printf("addr         : %"PRIx64"\n", (uint64_t)(uintptr_t)buffer);
- printf("sbla         : %"PRIx64"\n", (uint64_t)cfg.start_block);
- printf("dsmgmt       : %08x\n", 0);
- printf("reftag       : %08x\n", cfg.ref_tag);
- printf("apptag       : %04x\n", cfg.app_tag);
- printf("appmask      : %04x\n", cfg.app_tag_mask);
- if (cfg.dry_run)
- goto free_and_return;
- }
- 
- gettimeofday(&start_time, NULL);
- err = nvme_io(fd, opcode, cfg.start_block, cfg.block_count, control, 0,
- cfg.ref_tag, cfg.app_tag, cfg.app_tag_mask, buffer, mbuffer);
- gettimeofday(&end_time, NULL);
- if (cfg.latency)
- printf(" latency: %s: %llu us\n",
- command, elapsed_utime(start_time, end_time));
- if (err < 0)
- perror("submit-io");
- else if (err)
- printf("%s:%s(%04x)\n", command, nvme_status_to_string(err), err);
- else {
- if (!(opcode & 1) && write(dfd, (void *)buffer, cfg.data_size) < 0) {
- fprintf(stderr, "failed to write buffer to output file\n");
- err = EINVAL;
- goto free_and_return;
- } else if (!(opcode & 1) && cfg.metadata_size &&
- write(mfd, (void *)mbuffer, cfg.metadata_size) < 0) {
- fprintf(stderr, "failed to write meta-data buffer to output file\n");
- err = EINVAL;
- goto free_and_return;
- } else
- fprintf(stderr, "%s: Success\n", command);
- }
-  free_and_return:
- free(buffer);
- if (cfg.metadata_size)
- free(mbuffer);
- return err;
- }
 
 static int compare(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
@@ -2634,52 +2421,13 @@ static int read_cmd(int argc, char **argv, struct command *cmd, struct plugin *p
 
 static int write_cmd(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
+	int i;
 	const char *desc = "Copy from provided data buffer (default "\
 		"buffer is stdin) to specified logical blocks on the given "\
 		"device.";
-
+	for(i = 0; i<argc; i++)
+		printf("%s\n", argv[i]);
 	return submit_io(nvme_cmd_write, "write", desc, argc, argv);
-}
-
-char** format_argv(char *str, int *i)
-{
-	char s[] = " ";
-        char *temp, **data;
-
-	data = (char**) malloc(100*sizeof(char*));
-	temp = strtok(str, s);
-
-        for(*i=0; temp != NULL; *i = *i+1)
-        {
-                data[*i] = (char *) malloc(strlen(temp)*sizeof(char));
-                data[*i] = temp;
-                temp = strtok(NULL, s);
-        }
-
-	return data;
-}
-
-
-void* write_data(void *ptr)
-{
-        int argc, ret = 0;
-	struct write_struct *ws = (struct write_struct*)ptr;
-
-        const char *desc = "Copy from provided data buffer (default "\
-                "buffer is stdin) to specified logical blocks on the given "\
-                "device.";
-	char **argv = format_argv(ws->cmd, &argc);	
-
-/*	printf("Argc = %d\n", argc);
-        for(i = 0; i < argc; i++)
-                printf("%s ", argv[i]);
-	printf("\n");
-*/	
-        ret = submit_io_data(nvme_cmd_write, "write", desc, argc, argv, ws->buffer);
-	if (ret == -ENOTTY)
-                general_help(&builtin);
-
-	return NULL;
 }
 
 static int sec_recv(int argc, char **argv, struct command *cmd, struct plugin *plugin)
@@ -2987,54 +2735,9 @@ void register_extension(struct plugin *plugin)
 	nvme.extensions->tail = plugin;
 }
 
-int devide_and_write(char *device, char *buffer, unsigned int buffer_size)
-{
-	unsigned int start, count, size, chunk_size;
-	char name[10];
-	struct write_struct ws[NO_OF_CPU];
-	int i, err=0;
-
-	strcpy(name, "write");
-
-	count = (int)ceil((double)buffer_size/NVME_BLOCK_SIZE);
-	count = (int)ceil((double)count/NO_OF_CPU);
-	chunk_size = count * NVME_BLOCK_SIZE;
-
-	for(i=0; i<NO_OF_CPU; i++)
-	{
-		start = i * chunk_size; //consecutive index allocation
-		size = buffer_size - (i*chunk_size) > chunk_size ? chunk_size : buffer_size - (i * chunk_size);
- 		
-		sprintf(ws[i].cmd, "%s %s -s %d -c %d -z %d", name, device, start, count-1, size);
-//		printf("Command = %s\n", ws[i].cmd);
-
-		ws[i].buffer = malloc(size * sizeof(char));
-		memcpy(ws[i].buffer, buffer+i, size * sizeof(char));		
-
-//		write_data(&ws[i]);
-		err = pthread_create(&(tid[i]), NULL, write_data, (void*)&ws[i]);
-        	if (err != 0)
-            		printf("can't create thread %d:[%s]\n", i, strerror(err));
-//        	else
-//            		printf("Thread %d created successfully\n", i);
-		
-		pthread_join(tid[i], NULL);
-	}
-
-	return 0;
-}
-
-
-
 int main(int argc, char **argv)
 {
-	int ret = 0;
-	char *buffer, device[]="/dev/nvme0n1";
-	
-	struct timespec tstart={0,0}, tend={0,0};
-        
-	
-	printf("SOM\n");
+	int ret;
 
 	nvme.extensions->parent = &nvme;
 	if (argc < 2) {
@@ -3043,18 +2746,7 @@ int main(int argc, char **argv)
 	}
 	setlocale(LC_ALL, "");
 
-	buffer = malloc(100000*sizeof(char));
-	memset(buffer, 'W', 100000*sizeof(char));
-	
-	clock_gettime(CLOCK_MONOTONIC, &tstart);
-	devide_and_write(device, buffer, 100000*sizeof(char));
-	clock_gettime(CLOCK_MONOTONIC, &tend);
-	printf("Operation took about %.5f seconds\n",
-           ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - 
-           ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
-
-	printf("EOM\n");
-//	ret = handle_plugin(argc - 1, &argv[1], nvme.extensions);
+	ret = handle_plugin(argc - 1, &argv[1], nvme.extensions);
 	if (ret == -ENOTTY)
 		general_help(&builtin);
 
