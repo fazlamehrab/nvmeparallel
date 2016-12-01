@@ -69,10 +69,8 @@ const char *devicename;
 
 static const char nvme_version_string[] = NVME_VERSION;
 
-#define NO_OF_CPU 1
+#define NO_OF_CPU 8
 #define NVME_BLOCK_SIZE 512
-
-pthread_t tid[NO_OF_CPU];
 
 #define CREATE_CMD
 #include "nvme-builtin.h"
@@ -2365,6 +2363,7 @@ static int submit_io_data(int opcode, char *command, const char *desc,
 		goto free_and_return;
 	}
 
+
 //printf("data = %s\n", (char *)buffer);
 
 	if ((opcode & 1) && cfg.metadata_size &&
@@ -2395,6 +2394,7 @@ static int submit_io_data(int opcode, char *command, const char *desc,
 	err = nvme_io(fd, opcode, cfg.start_block, cfg.block_count, control, 0,
 			cfg.ref_tag, cfg.app_tag, cfg.app_tag_mask, buffer, mbuffer);
 	gettimeofday(&end_time, NULL);
+
 	if (cfg.latency)
 		printf(" latency: %s: %llu us\n",
 			command, elapsed_utime(start_time, end_time));
@@ -2403,7 +2403,8 @@ static int submit_io_data(int opcode, char *command, const char *desc,
 	else if (err)
 		printf("%s:%s(%04x)\n", command, nvme_status_to_string(err), err);
 	else {
-		if (!(opcode & 1) && write(dfd, (void *)buffer, cfg.data_size) < 0) {
+		data_buffer = buffer;
+		if (!(opcode & 1) && (data_buffer == NULL)){//write(dfd, (void *)buffer, cfg.data_size) < 0) {
 			fprintf(stderr, "failed to write buffer to output file\n");
 			err = EINVAL;
 			goto free_and_return;
@@ -2412,8 +2413,12 @@ static int submit_io_data(int opcode, char *command, const char *desc,
 			fprintf(stderr, "failed to write meta-data buffer to output file\n");
 			err = EINVAL;
 			goto free_and_return;
-		} /*else
-			fprintf(stderr, "%s: Success\n", command);*/
+		}/* else{
+			int var;
+			fprintf(stderr, "%s: Success\n", command);
+			for(var=0; var<cfg.data_size; var++)
+				printf("%c",data_buffer[var]);
+		}*/
 	}
  free_and_return:
 	free(buffer);
@@ -2659,10 +2664,31 @@ char** format_argv(char *str, int *i)
 	return data;
 }
 
+void* read_data(void *ptr)
+{
+        int i, argc, ret = 0;
+        struct write_struct *ws = (struct write_struct*)ptr;
+
+        const char *desc = "Copy from provided data buffer (default "\
+                "buffer is stdin) to specified logical blocks on the given "\
+                "device.";
+        char **argv = format_argv(ws->cmd, &argc);
+
+/*	printf("Argc = %d\n", argc);
+        for(i = 0; i < argc; i++)
+                printf("%s ", argv[i]);
+        printf("\n");
+*/
+        ret = submit_io_data(nvme_cmd_read, "read", desc, argc, argv, ws->buffer);
+        if (ret == -ENOTTY)
+                general_help(&builtin);
+
+        return NULL;
+}
 
 void* write_data(void *ptr)
 {
-        int argc, ret = 0;
+        int i, argc, ret = 0;
 	struct write_struct *ws = (struct write_struct*)ptr;
 
         const char *desc = "Copy from provided data buffer (default "\
@@ -2987,12 +3013,57 @@ void register_extension(struct plugin *plugin)
 	nvme.extensions->tail = plugin;
 }
 
-int devide_and_write(char *device, char *buffer, unsigned int buffer_size)
+int devide_and_read(char *device, char *buffer, unsigned long buffer_size)
 {
-	unsigned int start, count, size, chunk_size;
+        unsigned long start, count, size, chunk_size;
+        char name[10];
+        struct write_struct ws[NO_OF_CPU];
+        int i, err=0;
+	pthread_t tid[NO_OF_CPU];
+
+        strcpy(name, "read");
+
+        count = (int)ceil((double)buffer_size/NVME_BLOCK_SIZE);
+        count = (int)ceil((double)count/NO_OF_CPU);
+        chunk_size = count * NVME_BLOCK_SIZE;
+
+	for(i=0; i<NO_OF_CPU; i++)
+        {
+                start = i * count;//chunk_size; //consecutive index allocation
+                size = buffer_size - (i*chunk_size) > chunk_size ? chunk_size : buffer_size - (i * chunk_size);
+
+                sprintf(ws[i].cmd, "%s %s -s %lu -z %lu", name, device, start, size);
+              printf("Command = %s\n", ws[i].cmd);
+
+                ws[i].buffer = malloc(size * sizeof(char));
+                ws[i].buffer = buffer+i*size;
+
+	}
+	for(i=0; i<NO_OF_CPU; i++)
+        {
+//              read_data(&ws[i]);
+                err = pthread_create(&(tid[i]), NULL, read_data, (void*)&ws[i]);
+                if (err != 0)
+                        printf("can't create thread %d:[%s]\n", i, strerror(err));
+//              else
+//                      printf("Thread %d created successfully\n", i);
+//pthread_join(tid[i], NULL);
+        }
+
+	for(i=0; i<NO_OF_CPU; i++)
+		pthread_join(tid[i], NULL);
+	
+
+        return 0;
+}
+
+int devide_and_write(char *device, char *buffer, unsigned long buffer_size)
+{
+	unsigned long start, count, size, chunk_size;
 	char name[10];
 	struct write_struct ws[NO_OF_CPU];
 	int i, err=0;
+	pthread_t tid[NO_OF_CPU];
 
 	strcpy(name, "write");
 
@@ -3002,14 +3073,14 @@ int devide_and_write(char *device, char *buffer, unsigned int buffer_size)
 
 	for(i=0; i<NO_OF_CPU; i++)
 	{
-		start = i * chunk_size; //consecutive index allocation
+		start = i * count;//chunk_size; //consecutive index allocation
 		size = buffer_size - (i*chunk_size) > chunk_size ? chunk_size : buffer_size - (i * chunk_size);
- 		
-		sprintf(ws[i].cmd, "%s %s -s %d -c %d -z %d", name, device, start, count-1, size);
+
+		sprintf(ws[i].cmd, "%s %s -s %lu -z %lu", name, device, start, size);
 //		printf("Command = %s\n", ws[i].cmd);
 
 		ws[i].buffer = malloc(size * sizeof(char));
-		memcpy(ws[i].buffer, buffer+i, size * sizeof(char));		
+		memcpy(ws[i].buffer, buffer+i*size, size * sizeof(char));		
 
 //		write_data(&ws[i]);
 		err = pthread_create(&(tid[i]), NULL, write_data, (void*)&ws[i]);
@@ -3018,8 +3089,11 @@ int devide_and_write(char *device, char *buffer, unsigned int buffer_size)
 //        	else
 //            		printf("Thread %d created successfully\n", i);
 		
-		pthread_join(tid[i], NULL);
+//		pthread_join(tid[i], NULL);
 	}
+
+	for(i=0; i<NO_OF_CPU; i++)
+		pthread_join(tid[i], NULL);
 
 	return 0;
 }
@@ -3029,12 +3103,10 @@ int devide_and_write(char *device, char *buffer, unsigned int buffer_size)
 int main(int argc, char **argv)
 {
 	int ret = 0;
+	unsigned int i;
 	char *buffer, device[]="/dev/nvme0n1";
-	
+	unsigned long size = 2147483648*2;
 	struct timespec tstart={0,0}, tend={0,0};
-        
-	
-	printf("SOM\n");
 
 	nvme.extensions->parent = &nvme;
 	if (argc < 2) {
@@ -3043,18 +3115,37 @@ int main(int argc, char **argv)
 	}
 	setlocale(LC_ALL, "");
 
-	buffer = malloc(100000*sizeof(char));
-	memset(buffer, 'W', 100000*sizeof(char));
+	buffer = malloc(size*sizeof(char));
+	memset(buffer, 'A', size*sizeof(char));
 	
-	clock_gettime(CLOCK_MONOTONIC, &tstart);
-	devide_and_write(device, buffer, 100000*sizeof(char));
-	clock_gettime(CLOCK_MONOTONIC, &tend);
-	printf("Operation took about %.5f seconds\n",
-           ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - 
-           ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+	if(!strcmp(argv[1], "write"))
+	{
+		clock_gettime(CLOCK_MONOTONIC, &tstart);
 
-	printf("EOM\n");
-//	ret = handle_plugin(argc - 1, &argv[1], nvme.extensions);
+		devide_and_write(device, buffer, size*sizeof(char));
+
+		clock_gettime(CLOCK_MONOTONIC, &tend);
+	}
+	else if(!strcmp(argv[1], "read"))
+	{
+		clock_gettime(CLOCK_MONOTONIC, &tstart);
+
+		devide_and_read(device, buffer, size*sizeof(char));
+
+		clock_gettime(CLOCK_MONOTONIC, &tend);
+		/*for(i=0; i<size; i++)
+		{
+			printf("%c", buffer[i]);
+		}
+		printf("\n");*/
+	}
+	else
+		printf("Try read or write\n");
+
+	printf("Operation took about %.5f seconds\n",
+		   ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - 
+		   ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+
 	if (ret == -ENOTTY)
 		general_help(&builtin);
 
