@@ -69,10 +69,10 @@ const char *devicename;
 
 static const char nvme_version_string[] = NVME_VERSION;
 
-#define NO_OF_CPU 2
+#define NO_OF_CPU 4
 #define NVME_BLOCK_SIZE 512
 #define NVME_HW_BLOCK_SIZE 256
-#define SIZE 10000
+#define SIZE 1024000000
 
 #define CREATE_CMD
 #include "nvme-builtin.h"
@@ -3053,6 +3053,7 @@ void* again_devide_and_read(void *ptr)
                 size = ws->size > chunk_size ? chunk_size : ws->size;
 		count = size < NVME_BLOCK_SIZE ? 1 : size / NVME_BLOCK_SIZE;
 
+		memset((char*)(cmd+itaration), 0, 200);
                 sprintf((char*)(cmd+itaration), "%s %s -s %lu -z %lu -c %lu", name, ws->device, start, size, count-1);
 //                printf("Command %lu = %s\n", i, (char*)(cmd+itaration));
 		argv[itaration] = format_argv((char*)(cmd+itaration), &argc);
@@ -3099,6 +3100,9 @@ void* again_devide_and_write(void *ptr)
 
 int devide_and_read(char *device, char *buffer, unsigned long buffer_size)
 {
+        struct timespec tstart={0,0}, tend={0,0};
+        clock_gettime(CLOCK_MONOTONIC, &tstart);
+	
         unsigned long start, count, chunk_size;
 	char name[10];
 	struct write_struct ws[NO_OF_CPU];
@@ -3136,12 +3140,18 @@ int devide_and_read(char *device, char *buffer, unsigned long buffer_size)
 	for(j=0; j<i; j++)
 		pthread_join(tid[j], NULL);
 
+        clock_gettime(CLOCK_MONOTONIC, &tend);
+	printf("Read Operation took about %.5f seconds\n",
+		   ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - 
+		   ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
         return 0;
 }
 
 int devide_and_write(char *device, char *buffer, unsigned long buffer_size)
 {
-	unsigned long start, count, chunk_size, j;
+	struct timespec tstart={0,0}, tend={0,0};
+        clock_gettime(CLOCK_MONOTONIC, &tstart);
+        unsigned long start, count, chunk_size, j;
 	char name[10];
 	struct write_struct ws[NO_OF_CPU];
 	int i, err=0;
@@ -3181,95 +3191,207 @@ int devide_and_write(char *device, char *buffer, unsigned long buffer_size)
 	{
 		pthread_join(tid[j], NULL);
 	}
-
+        clock_gettime(CLOCK_MONOTONIC, &tend);
+	printf("Write Operation took about %.5f seconds\n",
+		   ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - 
+		   ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
 	return 0;
 }
 
-int app()
+void cli_app()
 {
 	char device[]="/dev/nvme0n1";
 	void *buf;
-//write	
+//generate data	
 	data* values = malloc(SIZE*sizeof(data));
 	for (int i=0; i < SIZE; i++) {
-		values[i].x = 1;
-        	values[i].y = 2;
-        	values[i].a = 'a';
-        	values[i].b = 'b';
+		values[i].x = 7;
+        	values[i].y = 8;
+        	values[i].a = 'C';
+        	values[i].b = 'D';
     	}
 
-    	//printf("Size = %lu  ", SIZE*sizeof(data));
+    	printf("Size = %lu\n", SIZE*sizeof(data));
+        
     	buf = malloc(SIZE*sizeof(data));
     	memcpy(buf, values, SIZE*sizeof(data));
     	free(values);
-	devide_and_write(device, buf, SIZE*sizeof(data));
+//write
+	printf("cli_app_");
+        devide_and_write(device, buf, SIZE*sizeof(data));
 //read
+	printf("cli_app_");
 	memset(buf, 0, SIZE*sizeof(data));
 	devide_and_read(device, buf, SIZE*sizeof(data));
 
 	data* newvalues = malloc(SIZE*sizeof(data));
    	memcpy(newvalues, buf, SIZE*sizeof(data));
     	free(buf);
-    	for (int i=0; i < SIZE; i++) {
+/*    	for (int i=0; i < SIZE; i++) {
+		printf(" %d", newvalues[i].x);
+		printf(" %d", newvalues[i].y);
+		printf(" %c", newvalues[i].a);
+		printf(" %c", newvalues[i].b);
+        	getchar();
+	}*/
+}
+
+int write_to_file(char *fname, void *buffer, unsigned long size)
+{
+	struct timespec tstart={0,0}, tend={0,0};
+	clock_gettime(CLOCK_MONOTONIC, &tstart);
+
+	int fp = open(fname, O_CREAT | O_WRONLY | O_DIRECT, S_IWRITE | S_IREAD);
+	if(fp < 0)
+	{
+		perror("File Create Fail");
+		printf("Error No. %d\n", errno);	
+		return -1;
+	}	
+	if(write(fp, buffer, size) < 0)
+	{
+		perror("File Write Fail");		
+		printf("Error No. %d\n", errno);
+		close(fp);
+		return -1;
+	}
+	close(fp);
+
+	clock_gettime(CLOCK_MONOTONIC, &tend);
+        printf("Write Operation took about %.5f seconds\n",
+		   ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - 
+		   ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+
+	return 0;
+}
+
+int read_from_file(char *fname, void *buffer, unsigned long size)
+{
+	struct timespec tstart={0,0}, tend={0,0};	
+	clock_gettime(CLOCK_MONOTONIC, &tstart);
+	int fp = open(fname, O_RDONLY | O_DIRECT);
+	if(fp < 0)
+	{
+		perror("File Create Fail");	
+		return -1;
+	}
+
+	
+	if(read(fp, buffer, size)<0)
+	{
+		perror("File Read Fail");
+		close(fp);
+		return -1;
+	}
+	close(fp);
+
+	clock_gettime(CLOCK_MONOTONIC, &tend);
+        printf("Read Operation took about %.5f seconds\n",
+		   ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - 
+		   ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+
+	return 0;
+}
+
+void file_app()
+{
+	char nf[] = "/media/fazla/180fa00c-8aed-4460-a506-97d1999df8f6/data_file1";
+	void *buf;
+        
+
+	//generate data	
+	data* values = malloc(SIZE*sizeof(data));
+
+	for (int i=0; i < SIZE; i++) {
+		values[i].x = 5;
+        	values[i].y = 6;
+        	values[i].a = 'A';
+        	values[i].b = 'B';
+    	}
+
+    	printf("Size = %lu\n", SIZE*sizeof(data));
+    	//buf = malloc(SIZE*sizeof(data));
+	if (posix_memalign(&buf, getpagesize(), SIZE*sizeof(data)))
+			exit(ENOMEM);    	
+	memcpy(buf, values, SIZE*sizeof(data));
+    	free(values);
+
+	//write
+	printf("file_app_");      
+	write_to_file(nf, buf, SIZE*sizeof(data));
+        
+	//read
+	printf("file_app_");
+	memset(buf, 0, SIZE*sizeof(data));;
+	read_from_file(nf, buf, SIZE*sizeof(data));
+
+	//Convert to structure
+	data* newvalues = malloc(SIZE*sizeof(data));
+   	memcpy(newvalues, buf, SIZE*sizeof(data));
+    	free(buf);
+/*   	for (int i=0; i < SIZE; i++) {
 		printf(" %d", newvalues[i].x);
 		printf(" %d", newvalues[i].y);
 		printf(" %c", newvalues[i].a);
 		printf(" %c", newvalues[i].b);
         	getchar();
 	}
-	return 0;
+*/
 }
 
-int main(int argc, char **argv)
+void rw_app(char *argv)
 {
-	int ret = 0;
-	unsigned int i;
-	char *buffer, device[]="/dev/nvme0n1";
-	unsigned long size =  10000000;//2147483648/100;
-	struct timespec tstart={0,0}, tend={0,0};
+	
+	char *buffer, device[] = "/dev/nvme0n1";
+	unsigned long size =  SIZE;//2147483648/100;
 
 	nvme.extensions->parent = &nvme;
-	if (argc < 2) {
-		general_help(&builtin);
-		return 0;
-	}
+
 	setlocale(LC_ALL, "");
 
+	printf("Size = %lu\n", size*sizeof(char));
 	buffer = malloc(size*sizeof(char));
-	
-	
-	//app();
-	if(!strcmp(argv[1], "write"))
+
+	if(!strcmp(argv, "write"))
 	{
 		memset(buffer, 'O', size*sizeof(char));
-		clock_gettime(CLOCK_MONOTONIC, &tstart);
 
 		devide_and_write(device, buffer, size*sizeof(char));
-
-		clock_gettime(CLOCK_MONOTONIC, &tend);
 	}
-	else if(!strcmp(argv[1], "read"))
+	else if(!strcmp(argv, "read"))
 	{	memset(buffer, 0, size*sizeof(char));
-		clock_gettime(CLOCK_MONOTONIC, &tstart);
 
 		devide_and_read(device, buffer, size*sizeof(char));
 
-		clock_gettime(CLOCK_MONOTONIC, &tend);
+/*		unsigned int i;
 		for(i=0; i<size; i++)
 		{
 			printf("%c", buffer[i]);
 		}
 		printf("\n");
-	}
+*/	}
 	else
 		printf("Try read or write\n");
 
-	printf("Operation took about %.5f seconds\n",
-		   ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - 
-		   ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+	free(buffer);
+}
 
-	if (ret == -ENOTTY)
-		general_help(&builtin);
+int main(int argc, char **argv)
+{
+	int ret = 0;
+	
+	if(argc<2)
+	{
+		printf("CLI APP\n");
+		cli_app();
+		printf("File APP\n");
+		file_app();
+	}
+	else
+	{
+		printf("%s\n", argv[1]);
+		rw_app(argv[1]);
+	}
 
 	return ret;
 }
