@@ -72,7 +72,7 @@ static const char nvme_version_string[] = NVME_VERSION;
 #define NO_OF_CPU 2
 #define NVME_BLOCK_SIZE 512
 #define NVME_HW_BLOCK_SIZE 256
-#define SIZE 1024000//000
+#define SIZE 1024000000
 
 #define CREATE_CMD
 #include "nvme-builtin.h"
@@ -3161,7 +3161,7 @@ int devide_and_write(char *device, char *buffer, unsigned long buffer_size)
 
 	count = (int)ceil((double)buffer_size/NVME_HW_BLOCK_SIZE/NVME_BLOCK_SIZE);
 	count = (int)ceil((double)count/NO_OF_CPU);
-	chunk_size = count * NVME_HW_BLOCK_SIZE * NVME_BLOCK_SIZE;	
+	chunk_size = count * NVME_HW_BLOCK_SIZE * NVME_BLOCK_SIZE;
 	start = 0;
 
 	for(i=0; i<NO_OF_CPU; i++)
@@ -3182,9 +3182,9 @@ int devide_and_write(char *device, char *buffer, unsigned long buffer_size)
             		printf("can't create thread %d:[%s]\n", i, strerror(err));
 //        	else
 //            		printf("Thread %d created successfully\n", i);
-		
+
 //		pthread_join(tid[i], NULL);
-		
+
 	}
 
 	for(j=0; j<i; j++)
@@ -3202,32 +3202,33 @@ void cli_app()
 {
 	char device[]="/dev/nvme0n1";
 	void *buf;
-//generate data	
-	data* values = malloc(SIZE*sizeof(data));
-	for (int i=0; i < SIZE; i++) {
+	unsigned long no_of_data = SIZE/sizeof(data);
+	//generate data
+	data* values = malloc(SIZE);
+	for (int i=0; i < no_of_data; i++) {
 		values[i].x = 7;
         	values[i].y = 8;
         	values[i].a = 'C';
         	values[i].b = 'D';
     	}
 
-    	printf("Size = %lu\n", SIZE*sizeof(data));
-        
-    	buf = malloc(SIZE*sizeof(data));
-    	memcpy(buf, values, SIZE*sizeof(data));
+    	printf("Size = %d\n", SIZE);
+
+    	buf = malloc(SIZE);
+    	memcpy(buf, values, SIZE);
     	free(values);
 //write
 	printf("cli_app_");
-        devide_and_write(device, buf, SIZE*sizeof(data));
+        devide_and_write(device, buf, SIZE);
 //read
 	printf("cli_app_");
-	memset(buf, 0, SIZE*sizeof(data));
-	devide_and_read(device, buf, SIZE*sizeof(data));
+	memset(buf, 0, SIZE);
+	devide_and_read(device, buf, SIZE);
 
-	data* newvalues = malloc(SIZE*sizeof(data));
-   	memcpy(newvalues, buf, SIZE*sizeof(data));
+	data* newvalues = malloc(SIZE);
+   	memcpy(newvalues, buf, SIZE);
     	free(buf);
-/*    	for (int i=0; i < SIZE; i++) {
+/*    	for (int i=0; i < no_of_data; i++) {
 		printf(" %d", newvalues[i].x);
 		printf(" %d", newvalues[i].y);
 		printf(" %c", newvalues[i].a);
@@ -3247,7 +3248,7 @@ int write_to_file(char *fname, void *buffer, unsigned long size)
 		perror("File Create Fail");
 		printf("Error No. %d\n", errno);	
 		return -1;
-	}	
+	}
 	if(write(fp, buffer, size) < 0)
 	{
 		perror("File Write Fail");		
@@ -3297,39 +3298,38 @@ void file_app()
 {
 	char nf[] = "/media/fazla/180fa00c-8aed-4460-a506-97d1999df8f6/data_file1";
 	void *buf;
-        
+	unsigned long no_of_data = SIZE/sizeof(data);
+	//generate data
+	data* values = malloc(SIZE);
 
-	//generate data	
-	data* values = malloc(SIZE*sizeof(data));
-
-	for (int i=0; i < SIZE; i++) {
+	for (int i=0; i < no_of_data; i++) {
 		values[i].x = 5;
         	values[i].y = 6;
         	values[i].a = 'A';
         	values[i].b = 'B';
     	}
 
-    	printf("Size = %lu\n", SIZE*sizeof(data));
+    	printf("Size = %d\n", SIZE);
     	//buf = malloc(SIZE*sizeof(data));
-	if (posix_memalign(&buf, getpagesize(), SIZE*sizeof(data)))
-			exit(ENOMEM);    	
-	memcpy(buf, values, SIZE*sizeof(data));
+	if (posix_memalign(&buf, getpagesize(), SIZE))
+			exit(ENOMEM);
+	memcpy(buf, values, SIZE);
     	free(values);
 
 	//write
-	printf("file_app_");      
-	write_to_file(nf, buf, SIZE*sizeof(data));
-        
+	printf("file_app_");
+	write_to_file(nf, buf, SIZE);
+
 	//read
 	printf("file_app_");
-	memset(buf, 0, SIZE*sizeof(data));;
-	read_from_file(nf, buf, SIZE*sizeof(data));
+	memset(buf, 0, SIZE);;
+	read_from_file(nf, buf, SIZE);
 
 	//Convert to structure
-	data* newvalues = malloc(SIZE*sizeof(data));
-   	memcpy(newvalues, buf, SIZE*sizeof(data));
+	data* newvalues = malloc(SIZE);
+   	memcpy(newvalues, buf, SIZE);
     	free(buf);
-/*   	for (int i=0; i < SIZE; i++) {
+/*   	for (int i=0; i < no_of_data; i++) {
 		printf(" %d", newvalues[i].x);
 		printf(" %d", newvalues[i].y);
 		printf(" %c", newvalues[i].a);
@@ -3341,7 +3341,6 @@ void file_app()
 
 void rw_app(char *argv)
 {
-	
 	char *buffer, device[] = "/dev/nvme0n1";
 	unsigned long size =  SIZE;//2147483648/100;
 
@@ -3379,7 +3378,7 @@ void rw_app(char *argv)
 int main(int argc, char **argv)
 {
 	int ret = 0;
-	
+
 	if(argc<2)
 	{
 		printf("CLI APP\n");
@@ -3387,11 +3386,28 @@ int main(int argc, char **argv)
 		printf("File APP\n");
 		file_app();
 	}
-	else
+	else if(!strcmp(argv[1], "cliapp"))
 	{
 		printf("%s\n", argv[1]);
-		rw_app(argv[1]);
+		cli_app();
 	}
+	else if(!strcmp(argv[1], "fileapp"))
+        {
+                printf("%s\n", argv[1]);
+                file_app();
+        }
+	else if(!strcmp(argv[1], "write"))
+        {
+                printf("%s\n", argv[1]);
+                rw_app(argv[1]);
+        }
+	else if(!strcmp(argv[1], "read"))
+        {
+                printf("%s\n", argv[1]);
+                rw_app(argv[1]);
+        }
+	else
+		printf("Check Arguments\n");
 
 	return ret;
 }
