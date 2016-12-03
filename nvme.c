@@ -69,10 +69,10 @@ const char *devicename;
 
 static const char nvme_version_string[] = NVME_VERSION;
 
-#define NO_OF_CPU 4
+#define NO_OF_CPU 2
 #define NVME_BLOCK_SIZE 512
 #define NVME_HW_BLOCK_SIZE 256
-#define SIZE 1024000000
+#define SIZE 1024000//000
 
 #define CREATE_CMD
 #include "nvme-builtin.h"
@@ -3044,7 +3044,7 @@ void* again_devide_and_read(void *ptr)
         itaration = (int)ceil((double)itaration/NVME_HW_BLOCK_SIZE);
 
 	argv = (char***)malloc(itaration*sizeof(char**));
-	
+
 	start = ws->start;
 	chunk_size = NVME_BLOCK_SIZE * NVME_HW_BLOCK_SIZE;
 
@@ -3058,7 +3058,7 @@ void* again_devide_and_read(void *ptr)
 //                printf("Command %lu = %s\n", i, (char*)(cmd+itaration));
 		argv[itaration] = format_argv((char*)(cmd+itaration), &argc);
                 read_data(argc, argv[itaration], ws->buffer);
-		start += chunk_size; //consecutive index allocation
+		start += NVME_HW_BLOCK_SIZE;//chunk_size; //consecutive index allocation
 		ws->size -= size;
 	}
 
@@ -3078,7 +3078,7 @@ void* again_devide_and_write(void *ptr)
         itaration = (int)ceil((double)ws->size/NVME_BLOCK_SIZE);
         itaration = (int)ceil((double)itaration/NVME_HW_BLOCK_SIZE);
 	argv = (char***)malloc(itaration*sizeof(char**));
-	
+
 	start = ws->start;
 	chunk_size = NVME_BLOCK_SIZE * NVME_HW_BLOCK_SIZE;
 
@@ -3091,7 +3091,7 @@ void* again_devide_and_write(void *ptr)
 //                printf("Command %lu = %s\n", i, (char*)(cmd+itaration));
 		argv[itaration] = format_argv((char*)(cmd+itaration), &argc);
                 write_data(argc, argv[itaration], ws->buffer);
-		start += chunk_size; //consecutive index allocation
+		start += NVME_HW_BLOCK_SIZE;//chunk_size; //consecutive index allocation
 		ws->size -= size;
 	}
 
@@ -3102,7 +3102,7 @@ int devide_and_read(char *device, char *buffer, unsigned long buffer_size)
 {
         struct timespec tstart={0,0}, tend={0,0};
         clock_gettime(CLOCK_MONOTONIC, &tstart);
-	
+
         unsigned long start, count, chunk_size;
 	char name[10];
 	struct write_struct ws[NO_OF_CPU];
@@ -3113,21 +3113,21 @@ int devide_and_read(char *device, char *buffer, unsigned long buffer_size)
 
 	count = (int)ceil((double)buffer_size/NVME_HW_BLOCK_SIZE/NVME_BLOCK_SIZE);
 	count = (int)ceil((double)count/NO_OF_CPU);
-	chunk_size = count * NVME_HW_BLOCK_SIZE * NVME_BLOCK_SIZE;	
+	chunk_size = count * NVME_HW_BLOCK_SIZE * NVME_BLOCK_SIZE;
 	start = 0;
 
 	for(i=0; i<NO_OF_CPU; i++)
         {
 		if(start>=buffer_size){
 			break;
-		}                
+		}
 		ws[i].start = start;
 		ws[i].device = device;
 		ws[i].size = buffer_size - (i*chunk_size) > chunk_size ? chunk_size : buffer_size - (i * chunk_size);
 		ws[i].buffer = malloc(ws[i].size * sizeof(char));
                 ws[i].buffer = buffer+i*ws[i].size;
-		start += ws[i].size;
-	
+		start += ws[i].size/NVME_BLOCK_SIZE;
+
                 err = pthread_create(&(tid[i]), NULL, again_devide_and_read, (void*)&ws[i]);
                 if (err != 0)
                         printf("can't create thread %d:[%s]\n", i, strerror(err));
@@ -3175,8 +3175,8 @@ int devide_and_write(char *device, char *buffer, unsigned long buffer_size)
 		ws[i].size = buffer_size - (i*chunk_size) > chunk_size ? chunk_size : buffer_size - (i * chunk_size);
 		ws[i].buffer = malloc(ws[i].size * sizeof(char));
 		memcpy(ws[i].buffer, buffer+i*ws[i].size, ws[i].size * sizeof(char));
-		start += ws[i].size;
-		
+		start += ws[i].size/NVME_BLOCK_SIZE;
+
 		err = pthread_create(&(tid[i]), NULL, again_devide_and_write, (void*)&ws[i]);
         	if (err != 0)
             		printf("can't create thread %d:[%s]\n", i, strerror(err));
