@@ -69,7 +69,7 @@ const char *devicename;
 
 static const char nvme_version_string[] = NVME_VERSION;
 
-#define NO_OF_CPU 2
+#define NO_OF_CPU 1
 #define NVME_BLOCK_SIZE 512
 #define NVME_HW_BLOCK_SIZE 256
 #define SIZE 1024000000
@@ -3030,7 +3030,7 @@ void register_extension(struct plugin *plugin)
 	nvme.extensions->tail = plugin;
 }
 
-void* again_devide_and_read(void *ptr)
+void* again_divide_and_read(void *ptr)
 {
         unsigned long start, count, size, chunk_size, itaration, i;
         char name[10], cmd[200][2000];
@@ -3065,7 +3065,7 @@ void* again_devide_and_read(void *ptr)
 	return 0;
 }
 
-void* again_devide_and_write(void *ptr)
+void* again_divide_and_write(void *ptr)
 {
         unsigned long start, size, count, chunk_size, itaration, i;
         char name[10], cmd[200][2000];
@@ -3098,7 +3098,7 @@ void* again_devide_and_write(void *ptr)
 	return 0;
 }
 
-int devide_and_read(char *device, char *buffer, unsigned long buffer_size)
+int divide_and_read(char *device, char *buffer, unsigned long buffer_size)
 {
         struct timespec tstart={0,0}, tend={0,0};
         clock_gettime(CLOCK_MONOTONIC, &tstart);
@@ -3128,7 +3128,7 @@ int devide_and_read(char *device, char *buffer, unsigned long buffer_size)
                 ws[i].buffer = buffer+i*ws[i].size;
 		start += ws[i].size/NVME_BLOCK_SIZE;
 
-                err = pthread_create(&(tid[i]), NULL, again_devide_and_read, (void*)&ws[i]);
+                err = pthread_create(&(tid[i]), NULL, again_divide_and_read, (void*)&ws[i]);
                 if (err != 0)
                         printf("can't create thread %d:[%s]\n", i, strerror(err));
 //              else
@@ -3147,7 +3147,7 @@ int devide_and_read(char *device, char *buffer, unsigned long buffer_size)
         return 0;
 }
 
-int devide_and_write(char *device, char *buffer, unsigned long buffer_size)
+int divide_and_write(char *device, char *buffer, unsigned long buffer_size)
 {
 	struct timespec tstart={0,0}, tend={0,0};
         clock_gettime(CLOCK_MONOTONIC, &tstart);
@@ -3177,7 +3177,7 @@ int devide_and_write(char *device, char *buffer, unsigned long buffer_size)
 		memcpy(ws[i].buffer, buffer+i*ws[i].size, ws[i].size * sizeof(char));
 		start += ws[i].size/NVME_BLOCK_SIZE;
 
-		err = pthread_create(&(tid[i]), NULL, again_devide_and_write, (void*)&ws[i]);
+		err = pthread_create(&(tid[i]), NULL, again_divide_and_write, (void*)&ws[i]);
         	if (err != 0)
             		printf("can't create thread %d:[%s]\n", i, strerror(err));
 //        	else
@@ -3219,11 +3219,11 @@ void cli_app()
     	free(values);
 //write
 	printf("cli_app_");
-        devide_and_write(device, buf, SIZE);
+        divide_and_write(device, buf, SIZE);
 //read
 	printf("cli_app_");
 	memset(buf, 0, SIZE);
-	devide_and_read(device, buf, SIZE);
+	divide_and_read(device, buf, SIZE);
 
 	data* newvalues = malloc(SIZE);
    	memcpy(newvalues, buf, SIZE);
@@ -3355,12 +3355,12 @@ void rw_app(char *argv)
 	{
 		memset(buffer, 'O', size*sizeof(char));
 
-		devide_and_write(device, buffer, size*sizeof(char));
+		divide_and_write(device, buffer, size*sizeof(char));
 	}
 	else if(!strcmp(argv, "read"))
 	{	memset(buffer, 0, size*sizeof(char));
 
-		devide_and_read(device, buffer, size*sizeof(char));
+		divide_and_read(device, buffer, size*sizeof(char));
 
 /*		unsigned int i;
 		for(i=0; i<size; i++)
